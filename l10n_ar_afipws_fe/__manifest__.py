@@ -17,6 +17,7 @@
         'views/account_move_views.xml',
         'views/account_journal_view.xml',
         'views/report_invoice.xml',
+        'views/res_partner.xml',
         'views/menuitem.xml',
     ],
     'demo': [

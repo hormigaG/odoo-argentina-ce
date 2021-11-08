@@ -7,7 +7,6 @@
     'license': 'AGPL-3',
     'summary': '',
     "depends": [
-        "report_aeroo",
         "l10n_ar",
     ],
     'external_dependencies': {

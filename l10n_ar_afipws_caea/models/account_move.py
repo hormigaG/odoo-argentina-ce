@@ -22,7 +22,7 @@ class AccountMove(models.Model):
             return super().get_pyafipws_last_invoice(document_type)
 
     def post(self):
-        caea_state = self.env['ir.config_parameter'].get_param(
+        caea_state = self.env['ir.config_parameter'].sudo().get_param(
             'afip.ws.caea.state', 'inactive')
         if caea_state == 'active':
             inv_ids = self.filtered(
@@ -35,7 +35,7 @@ class AccountMove(models.Model):
         return res
 
     def do_pyafipws_request_cae(self):
-        caea_state = self.env['ir.config_parameter'].get_param(
+        caea_state = self.env['ir.config_parameter'].sudo().get_param(
             'afip.ws.caea.state', 'inactive')
         if caea_state == 'inactive':
             return super().do_pyafipws_request_cae()

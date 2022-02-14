@@ -19,6 +19,7 @@
         'views/company.xml',
         'views/res_config_settings.xml',
         'views/pyafipws_dummy.xml',
+        'views/account_move.xml',
         'data/ir_cron.xml'
     ],
     'qweb': [

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from odoo import models, fields, api
+from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import logging
 _logger = logging.getLogger(__name__)
@@ -10,9 +11,20 @@ class AfipwsCaea(models.Model):
     _name = 'afipws.caea'
     _description = 'Caea registry'
     _order = "date_from desc"
+    _inherit = ['mail.thread', 'mail.activity.mixin']
+
     _sql_constraints = [
         ('unique_caea', 'unique (company_id,name,order)', 'CAEA already exists!')
     ]
+    state = fields.Selection(
+        [('draft', 'draft'), ('active', 'active'), ('reported', 'reported')],
+        string='State',
+        default='draft'
+    )
+    name = fields.Char(
+        string='CAEA',
+        default='/'
+    )
 
     company_id = fields.Many2one(
         'res.company',
@@ -21,18 +33,37 @@ class AfipwsCaea(models.Model):
         default=lambda self: self.env.company,
         index=True,
     )
-    name = fields.Char(
+    period = fields.Char(
         string='Period',
         size=6,
+        required=True,
+    )
+    year = fields.Integer(
+        string='Year',
+        required=True,
+    )
+    month = fields.Selection(
+        [
+            ('01', 'January'),
+            ('02', 'February'),
+            ('03', 'March'),
+            ('04', 'April'),
+            ('05', 'May'),
+            ('06', 'June'),
+            ('07', 'July'),
+            ('08', 'August'),
+            ('09', 'September'),
+            ('10', 'October'),
+            ('11', 'November'),
+            ('12', 'December'),
+        ],
+        string='Month',
         required=True,
     )
     order = fields.Selection(
         [('1', 'first Fortnight'), ('2', 'second Fortnight')],
         string='Fortnight',
         required=True,
-    )
-    afip_caea = fields.Char(
-        string='CAEA',
     )
     afip_observations = fields.Text(
         string='Observations',
@@ -50,26 +81,57 @@ class AfipwsCaea(models.Model):
         compute="_compute_date",
         store=True,
     )
+    process_deadline = fields.Date(
+        string='process deadline'
+    )    
     move_ids = fields.One2many(
         'account.move',
         'caea_id',
         string='Moves',
     )
+    journal_ids = fields.Many2many(
+        'account.journal',
+        string='Autorized CAEA journals',
+    )
 
-    @api.depends('name', 'order')
+    def action_get_caea_pos(self):
+        self.ensure_one()
+        afip_ws = self.get_afip_ws()
+        ws = self.company_id.get_connection(afip_ws).connect()
+        if afip_ws == 'wsfe':
+            ret = ws.ParamGetPtosVenta(sep="|")
+            journal_ids = False
+            pos_numbers = []
+            for res in ret:
+                if 'EmisionTipo:CAEA' in res:
+                    pos_numbers.append(int(res.split('|')[0])) 
+                    journal_ids = self.env['account.journal'].search(
+                        [('l10n_ar_afip_pos_number', 'in', pos_numbers)])
+                if journal_ids:
+                    self.journal_ids = [(6, 0, journal_ids.ids)]
+
+    def get_afip_ws(self):
+        return 'wsfe'
+
+    @api.onchange('month', 'year')
+    def _onchange_month_year(self):
+        if self.year and self.month:
+            self.period = str(self.year) + self.month
+    
+    @api.depends('month', 'year', 'order')
     def _compute_date(self):
         for caea in self:
-            if caea.order and caea.name:
+            if caea.year and caea.month:
                 if caea.order == '1':
                     caea.date_from = fields.Date.from_string(
-                        "%s-%s-01" % (caea.name[0:4], caea.name[4:]))
+                        "%s-%s-01" % (caea.year, caea.month))
                     caea.date_to = fields.Date.from_string(
-                        "%s-%s-15" % (caea.name[0:4], caea.name[4:]))
-                else:
+                        "%s-%s-15" % (caea.year, caea.month))
+                elif caea.order == '2':
                     caea.date_from = fields.Date.from_string(
-                        "%s-%s-16" % (caea.name[0:4], caea.name[4:]))
+                        "%s-%s-16" % (caea.year, caea.month))
                     caea.date_to = fields.Date.from_string(
-                        "%s-%s-1" % (caea.name[0:4], caea.name[4:])) + relativedelta(months=1) - relativedelta(days=1)
+                        "%s-%s-1" % (caea.year, caea.month)) + relativedelta(months=1) - relativedelta(days=1)
 
     @api.model
     def create(self, values):
@@ -84,35 +146,33 @@ class AfipwsCaea(models.Model):
         company_id = self.env['res.company'].search(
             [('id', '=', values['company_id'])])
         ws = company_id.get_connection('wsfe').connect()
-        caea = ws.CAEAConsultar(values['name'], values['order'])
+        caea = ws.CAEAConsultar(values['period'], values['order'])
         # raise ValidationError(
         #        _('The Common Name must be lower than 50 characters long'))
 
         #_logger.info("ws.ErrMsg " % ws.ErrMsg)
         if caea == '':
-            caea = ws.CAEASolicitar(values['name'], values['order'])
+            caea = ws.CAEASolicitar(values['period'], values['order'])
             _logger.info(ws.ErrMsg)
             _logger.info(caea)
 
-        values['afip_caea'] = caea
+        values['name'] = caea
         values['afip_observations'] = ws.Obs
-
+        values['process_deadline'] = datetime.strptime(ws.FchTopeInf, '%Y%m%d')
+        values['state'] = 'active'
+        # TODO: FchProceso
         return super().create(values)
 
-    def send_caea_invoices(self):
+    def action_send_invoices(self):
         self.env['ir.config_parameter'].set_param(
             'afip.ws.caea.state', 'inactive')
 
-        move_ids = self.env['account.move'].search([
-            ('afip_auth_mode', '=', 'CAEA'),
-            ('afip_auth_code', '=', self.afip_caea)
-        ], order='name asc')
-        out_invoice = move_ids.filtered(lambda i: i.type in ['out_invoice'])
-        out_refund = move_ids.filtered(lambda i: i.type in ['out_refund'])
-        for inv in out_invoice:
-            inv.do_pyafipws_request_cae()
-        for inv in out_refund:
-            inv.do_pyafipws_request_cae()
+        move_ids = self.move_ids.filtered(
+            lambda m: m.l10n_ar_afip_caea_reported is False)
+
+        for inv in move_ids.sorted(key=lambda r: r.caea_post_datetime):
+            _logger.info(inv.name)
+            inv.do_pyafipws_post_caea_invoice()
 
     def cron_request_caea(self):
         request_date = fields.Date.today() + relativedelta(days=7)
@@ -160,7 +220,7 @@ class AfipwsCaea(models.Model):
             ('date_from', '<=',  fields.Date.today() + relativedelta(days=1)),
             ('date_to', '>=',  fields.Date.today() + relativedelta(days=1))
         ])
-        caea_ids.send_caea_invoices()
+        caea_ids.action_send_invoices()
 
 
 class AfipwsCaeaLog(models.Model):

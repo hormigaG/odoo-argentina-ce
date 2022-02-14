@@ -83,8 +83,7 @@ class AccountMove(models.Model):
     @api.depends('journal_id', 'afip_auth_code')
     def _compute_validation_type(self):
         for rec in self:
-            if rec.journal_id.afip_ws and \
-                    (not rec.afip_auth_code or (rec.afip_auth_code and rec.afip_auth_mode == 'CAEA')):
+            if rec.journal_id.afip_ws and not rec.afip_auth_code:
                 validation_type = self.env['res.company']._get_environment_type()
                 # if we are on homologation env and we dont have certificates
                 # we validate only locally
@@ -154,7 +153,7 @@ class AccountMove(models.Model):
             # Ignore invoices with cae (do not check date)
             # 
 
-            if inv.afip_auth_code and inv.afip_auth_mode != 'CAEA':
+            if inv.afip_auth_code:
                 continue
             afip_ws = inv.journal_id.afip_ws
             if not afip_ws:
@@ -267,10 +266,6 @@ class AccountMove(models.Model):
 
             # create the invoice internally in the helper
             if afip_ws == 'wsfe':
-                if inv.afip_auth_mode == 'CAEA' and inv.afip_auth_code:
-                    caea = inv.afip_auth_code
-                else:
-                    caea = False
 
                 ws.CrearFactura(
                     concepto, tipo_doc, nro_doc, doc_afip_code, pos_number,
@@ -278,7 +273,7 @@ class AccountMove(models.Model):
                     imp_iva,
                     imp_trib, imp_op_ex, fecha_cbte, fecha_venc_pago,
                     fecha_serv_desde, fecha_serv_hasta,
-                    moneda_id, moneda_ctz, caea
+                    moneda_id, moneda_ctz
                 )
             # elif afip_ws == 'wsmtxca':
             #     obs_generales = inv.comment
@@ -555,8 +550,7 @@ class AccountMove(models.Model):
             # escribe aca si no hay errores
             if vto:
                 vto = datetime.strptime(vto, '%Y%m%d').date()
-            _logger.info('CAE solicitado con exito. CAE: %s. Resultado %s' % (
-                ws.CAE, ws.Resultado))
+            _logger.info('CAE solicitado con exito. %s. Resultado %s' % (afip_auth_code, ws.Resultado))
             inv.write({
                 'afip_auth_mode': ws.EmisionTipo,
                 'afip_auth_code': afip_auth_code,
